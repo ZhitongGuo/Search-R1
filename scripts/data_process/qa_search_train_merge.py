@@ -19,7 +19,12 @@ import re
 import os
 import datasets
 
-from verl.utils.hdfs_io import copy, makedirs
+try:
+    from verl.utils.hdfs_io import copy, makedirs
+except ImportError:
+    import shutil, os
+    copy = shutil.copytree
+    makedirs = os.makedirs
 import argparse
 
 

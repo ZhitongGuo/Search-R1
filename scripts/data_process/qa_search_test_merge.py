@@ -19,7 +19,12 @@ import re
 import os
 import datasets
 
-from verl.utils.hdfs_io import copy, makedirs
+try:
+    from verl.utils.hdfs_io import copy, makedirs
+except ImportError:
+    import shutil, os
+    copy = shutil.copytree
+    makedirs = os.makedirs
 import argparse
 
 
@@ -56,7 +61,7 @@ if __name__ == '__main__':
         if data_source != 'strategyqa':
             dataset = datasets.load_dataset('RUC-NLPIR/FlashRAG_datasets', data_source)
         else:
-            dataset = datasets.load_dataset('json', data_files="/home/peterjin/mnt/data/strategyqa/test_correct.jsonl")
+            raise ValueError("strategyqa requires a local JSONL file -- skip for now")
 
         if 'test' in dataset:
             print(f'Using the {data_source} test dataset...')
