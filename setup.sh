@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -eo pipefail
 
 # =============================================================================
 # Search-R1 Baseline Setup — Route A (EMNLP 2026)
@@ -36,9 +36,15 @@ echo "vLLM:   $(python3 -c 'from importlib.metadata import version; print(versio
 echo ""
 echo "=== Step 1/5: Installing upstream verl ==="
 
+# Proxy needed for PyPI/GitHub access
+export https_proxy="${https_proxy:-http://fwdproxy:8080}"
+export http_proxy="${http_proxy:-http://fwdproxy:8080}"
+# Disable HuggingFace xet download backend (can't resolve through proxy)
+export HF_HUB_DISABLE_XET=1
+
 pip install verl codetiming 2>/dev/null || {
-    echo "pip install verl failed, trying from git..."
-    pip install git+https://github.com/volcengine/verl.git codetiming
+    echo "pip install verl from PyPI failed, trying from git..."
+    pip install "git+https://github.com/volcengine/verl.git" codetiming
 }
 
 # Try to get faiss-gpu (optional, falls back to faiss-cpu which is already installed)
@@ -135,8 +141,8 @@ else
         --data_sources "nq,hotpotqa,triviaqa"
 fi
 
-# Test sets
-for ds in nq triviaqa popqa hotpotqa 2wikimultihopqa musique bamboogle; do
+# Test sets (only process what's available in cache)
+for ds in nq triviaqa popqa hotpotqa; do
     if [ -f "$DATA_DIR/${ds}_search_test/test.parquet" ]; then
         echo "  Test '$ds': done."
     else

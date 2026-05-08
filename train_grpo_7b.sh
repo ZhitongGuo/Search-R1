@@ -7,6 +7,7 @@ set -euo pipefail
 # =============================================================================
 
 cd "$(dirname "$0")"
+source .venv/bin/activate
 mkdir -p logs
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7

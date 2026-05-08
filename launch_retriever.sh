@@ -25,11 +25,10 @@ done
 
 echo "Launching retriever: $RETRIEVER_NAME on port 8000"
 
-# Put retriever on GPU 7 to avoid competing with training rollouts
-CUDA_VISIBLE_DEVICES=7 python3 "$SEARCH_R1_DIR/search_r1/search/retrieval_server.py" \
+# GPU 0 for encoder, FAISS on CPU (faiss-gpu not installed)
+CUDA_VISIBLE_DEVICES=0 python3 "$SEARCH_R1_DIR/search_r1/search/retrieval_server.py" \
     --index_path "$INDEX_FILE" \
     --corpus_path "$CORPUS_FILE" \
     --topk 3 \
     --retriever_name "$RETRIEVER_NAME" \
-    --retriever_model "$RETRIEVER_MODEL" \
-    --faiss_gpu
+    --retriever_model "$RETRIEVER_MODEL"
