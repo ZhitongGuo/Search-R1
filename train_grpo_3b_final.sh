@@ -2,10 +2,8 @@
 set -eo pipefail
 
 # =============================================================================
-# Search-R1 GRPO — Qwen2.5-3B v4 (FROM SCRATCH)
-# Original v1 hyperparams (kl_coef=0.001, entropy_coeff=0.001)
-# + search_r1 parser + stop strings (actual retrieval)
-# + flash_attn optimizations
+# Search-R1 GRPO — Qwen2.5-3B FINAL (single-turn, fast)
+# All optimizations, ~30s/step, ~8h to 1005 steps
 # =============================================================================
 
 cd "$(dirname "$0")"
@@ -17,11 +15,10 @@ export LD_PRELOAD="/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/l
 export RAY_DISABLE_DASHBOARD=1
 export VLLM_USE_V1=1
 
-EXPERIMENT_NAME="nq-grpo-qwen2.5-3b-v4-$(date +%m%d)"
+EXPERIMENT_NAME="nq-grpo-qwen2.5-3b-final-$(date +%m%d)"
 
 echo "============================================="
-echo "v4: From scratch, original hyperparams + search fix"
-echo "kl_coef=0.001, entropy_coeff=0.001"
+echo "FINAL: $EXPERIMENT_NAME (single-turn, fast)"
 echo "============================================="
 
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
@@ -50,13 +47,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.n=5 \
-    actor_rollout_ref.rollout.multi_turn.enable=true \
-    "actor_rollout_ref.rollout.multi_turn.tool_config_path=$(pwd)/tool_config.yaml" \
-    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.max_user_turns=1 \
-    actor_rollout_ref.rollout.multi_turn.max_tool_response_length=500 \
-    actor_rollout_ref.rollout.multi_turn.format=search_r1 \
-    actor_rollout_ref.rollout.agent.default_agent_loop=tool_agent \
     "reward.custom_reward_function.path=$(pwd)/reward_fn.py" \
     reward.custom_reward_function.name=compute_score \
     "trainer.logger=['console']" \
@@ -65,8 +55,8 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=100 \
     trainer.test_freq=50 \
+    trainer.val_before_train=true \
     trainer.resume_mode=disable \
-    trainer.val_before_train=false \
     trainer.project_name=Search-R1 \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.total_epochs=15 \

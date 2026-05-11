@@ -44,14 +44,15 @@ class SearchR1ToolParser(ToolParser):
         if not matches:
             return text, []
 
-        query_list = [m.strip() for m in matches if m.strip()]
-        if not query_list:
+        # Only take the FIRST search query to prevent search-spamming
+        first_query = next((m.strip() for m in matches if m.strip()), None)
+        if not first_query:
             return text, []
 
         function_calls = [
             FunctionCall(
                 name="search",
-                arguments=json.dumps({"query_list": query_list}, ensure_ascii=False),
+                arguments=json.dumps({"query_list": [first_query]}, ensure_ascii=False),
             )
         ]
 

@@ -2,10 +2,8 @@
 set -eo pipefail
 
 # =============================================================================
-# Search-R1 GRPO — Qwen2.5-3B v4 (FROM SCRATCH)
-# Original v1 hyperparams (kl_coef=0.001, entropy_coeff=0.001)
-# + search_r1 parser + stop strings (actual retrieval)
-# + flash_attn optimizations
+# Search-R1 GRPO — Qwen2.5-3B v5 (batched search via custom AgentLoopManager)
+# Ported original LLMGenerationManager's batched search to upstream verl
 # =============================================================================
 
 cd "$(dirname "$0")"
@@ -16,12 +14,12 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export LD_PRELOAD="/usr/local/cuda/lib64/libcublas.so.12:/usr/local/cuda/lib64/libcublasLt.so.12"
 export RAY_DISABLE_DASHBOARD=1
 export VLLM_USE_V1=1
+export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-EXPERIMENT_NAME="nq-grpo-qwen2.5-3b-v4-$(date +%m%d)"
+EXPERIMENT_NAME="nq-grpo-qwen2.5-3b-v5-$(date +%m%d)"
 
 echo "============================================="
-echo "v4: From scratch, original hyperparams + search fix"
-echo "kl_coef=0.001, entropy_coeff=0.001"
+echo "v5: Batched search via custom AgentLoopManager"
 echo "============================================="
 
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
@@ -50,13 +48,15 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.rollout.prompt_length=4096 \
+    actor_rollout_ref.rollout.response_length=2048 \
     actor_rollout_ref.rollout.multi_turn.enable=true \
-    "actor_rollout_ref.rollout.multi_turn.tool_config_path=$(pwd)/tool_config.yaml" \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.max_user_turns=1 \
     actor_rollout_ref.rollout.multi_turn.max_tool_response_length=500 \
     actor_rollout_ref.rollout.multi_turn.format=search_r1 \
-    actor_rollout_ref.rollout.agent.default_agent_loop=tool_agent \
+    actor_rollout_ref.rollout.agent.agent_loop_manager_class=search_r1.llm_agent.batched_agent_loop_manager.BatchedSearchAgentLoopManager \
+    +retriever.url=http://localhost:8000/retrieve \
+    +retriever.topk=3 \
     "reward.custom_reward_function.path=$(pwd)/reward_fn.py" \
     reward.custom_reward_function.name=compute_score \
     "trainer.logger=['console']" \
