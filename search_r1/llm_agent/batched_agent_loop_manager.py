@@ -12,6 +12,7 @@ This reduces retriever overhead from O(batch_size * n * turns) calls to O(turns)
 """
 
 import asyncio
+import importlib
 import re
 import time
 from uuid import uuid4
@@ -46,6 +47,15 @@ class BatchedSearchAgentLoopManager(AgentLoopManager):
         mt_cfg = config.actor_rollout_ref.rollout.get("multi_turn", {})
         self.max_turns = mt_cfg.get("max_assistant_turns", 2)
         self.max_obs_length = mt_cfg.get("max_tool_response_length", 500)
+
+        reward_cfg = config.reward.custom_reward_function
+        if reward_cfg.path:
+            spec = importlib.util.spec_from_file_location("reward_fn", reward_cfg.path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.reward_fn = getattr(mod, reward_cfg.name)
+        else:
+            self.reward_fn = None
 
     async def _init_agent_loop_workers(self):
         """Override: we don't use per-sample agent loop workers.
@@ -89,13 +99,15 @@ class BatchedSearchAgentLoopManager(AgentLoopManager):
 
         pad_id = self.tokenizer.pad_token_id
 
-        # Extract per-sample prompt token ids (strip left padding)
-        input_ids = prompts.batch["input_ids"]
-        attention_mask = prompts.batch["attention_mask"]
+        # Tokenize from raw_prompt (list of message dicts) since upstream verl
+        # passes non_tensor_batch only (batch is None after _get_gen_batch)
         original_prompt_ids = []
         for i in range(batch_size):
-            mask = attention_mask[i].bool()
-            ids = input_ids[i][mask].tolist()
+            raw_prompt = prompts.non_tensor_batch["raw_prompt"][i]
+            text = self.tokenizer.apply_chat_template(
+                raw_prompt, tokenize=False, add_generation_prompt=True
+            )
+            ids = self.tokenizer.encode(text, add_special_tokens=False)
             original_prompt_ids.append(ids)
 
         # State tracking per sample
@@ -245,6 +257,20 @@ class BatchedSearchAgentLoopManager(AgentLoopManager):
         response_mask_t = response_mask_t * response_attn
         position_ids_t = compute_position_id_with_mask(attention_mask_t)
 
+        # Compute rm_scores using the custom reward function
+        rm_scores = torch.zeros_like(response_mask_t, dtype=torch.float32)
+        if self.reward_fn is not None and "reward_model" in prompts.non_tensor_batch:
+            for i in range(batch_size):
+                resp_text = self.tokenizer.decode(all_response_ids[i], skip_special_tokens=False)
+                reward_model_info = prompts.non_tensor_batch["reward_model"][i]
+                ground_truth = reward_model_info.get("ground_truth", reward_model_info)
+                data_source = prompts.non_tensor_batch.get("data_source", np.array([""] * batch_size))[i]
+                score = self.reward_fn(data_source, resp_text, ground_truth)
+                # Place score at last valid response token
+                resp_len = int(response_attn[i].sum().item())
+                if resp_len > 0:
+                    rm_scores[i, resp_len - 1] = score
+
         batch_dict = TensorDict(
             {
                 "prompts": prompts_t,
@@ -253,6 +279,7 @@ class BatchedSearchAgentLoopManager(AgentLoopManager):
                 "input_ids": input_ids_t,
                 "attention_mask": attention_mask_t,
                 "position_ids": position_ids_t,
+                "rm_scores": rm_scores,
             },
             batch_size=batch_size,
         )
@@ -290,19 +317,21 @@ class BatchedSearchAgentLoopManager(AgentLoopManager):
             meta_info={"timing": timing},
         )
 
-    def _batch_search(self, queries: list[str]) -> list[str]:
+    def _batch_search(self, queries: list[str], chunk_size: int = 256) -> list[str]:
         if not queries:
             return []
-        payload = {"queries": queries, "topk": self.topk, "return_scores": True}
-        resp = requests.post(self.search_url, json=payload, timeout=120)
-        results = resp.json()["result"]
-        formatted = []
-        for result in results:
-            text = ""
-            for idx, doc in enumerate(result):
-                content = doc["document"]["contents"]
-                title = content.split("\n")[0]
-                body = "\n".join(content.split("\n")[1:])
-                text += f"Doc {idx+1}(Title: {title}) {body}\n"
-            formatted.append(text)
-        return formatted
+        all_formatted = []
+        for start in range(0, len(queries), chunk_size):
+            chunk = queries[start : start + chunk_size]
+            payload = {"queries": chunk, "topk": self.topk, "return_scores": True}
+            resp = requests.post(self.search_url, json=payload, timeout=600)
+            results = resp.json()["result"]
+            for result in results:
+                text = ""
+                for idx, doc in enumerate(result):
+                    content = doc["document"]["contents"]
+                    title = content.split("\n")[0]
+                    body = "\n".join(content.split("\n")[1:])
+                    text += f"Doc {idx+1}(Title: {title}) {body}\n"
+                all_formatted.append(text)
+        return all_formatted
